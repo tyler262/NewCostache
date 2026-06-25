@@ -755,6 +755,68 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
     return parseDate(serverNowMs() + calcDistance(origin, target) * speedTroop);
   }
 
+  /* ------------------------------------------------------------------ *
+   *  Timing: night bonus + landing window (ported from the original)
+   * ------------------------------------------------------------------ */
+  // active: 0 = off, 1 = static interval, 2 = per-player dynamic
+  function getBonusNight() {
+    const cached = localStorage.getItem(game_data.world + "nightBonus");
+    if (cached !== null) return JSON.parse(cached);
+    const data = httpGet("/interface.php?func=get_config");
+    const doc = new DOMParser().parseFromString(data, "text/html");
+    const night = doc.getElementsByTagName("night")[0];
+    let obj = { active: "0", start_hour: "0", end_hour: "0" };
+    if (night) {
+      const tag = (n) => (night.getElementsByTagName(n)[0] ? night.getElementsByTagName(n)[0].innerHTML : "0");
+      obj = { active: tag("active"), start_hour: tag("start_hour"), end_hour: tag("end_hour") };
+    }
+    localStorage.setItem(game_data.world + "nightBonus", JSON.stringify(obj));
+    return obj;
+  }
+
+  // For dynamic bonus: fetch each player's current night interval (throttled).
+  function getBonusNightForEach(list) {
+    return new Promise((resolve) => {
+      const map = new Map();
+      const step = (urls) => {
+        const item = urls.length ? urls.pop() : null;
+        if (!item) { resolve(map); return; }
+        const start = Date.now();
+        $.ajax({
+          url: game_data.link_base_pure + `map&ajax=map_info&source=${item.villageId}&target=${item.villageId}&`,
+          method: "get",
+          success: (data) => {
+            const m = data.night_bonus.current_interval.match(/[0-9]{2}:[0-9]{2}/g);
+            map.set(item.playerId, { start_hour: m[0], end_hour: m[1] });
+            const wait = Math.max(0, 200 - (Date.now() - start));
+            window.setTimeout(() => { if (typeof UI !== "undefined") UI.SuccessMessage("night bonus: " + urls.length); step(urls); }, wait);
+          },
+          error: () => step(urls),
+        });
+      };
+      step(list.slice());
+    });
+  }
+
+  // true => the attack lands during the bonus-night window (i.e. avoid it).
+  function intervalHour(time_start, time_end, time_target) {
+    if (time_start == 0) time_start = 23 * 3600 * 1000 + 40 * 60000;
+    else time_start -= 20 * 60000;
+    if (time_start < time_end) return time_target > time_start && time_target < time_end;
+    return !(time_target > time_end && time_target < time_start);
+  }
+
+  const hhmmToMs = (s) => parseInt(s.split(":")[0]) * 3600000 + parseInt(s.split(":")[1]) * 60000;
+
+  function landsInBonus(mapInfoVillages, mapPlayersBonus, target, landMs) {
+    const info = mapInfoVillages.get(target);
+    const pb = info && mapPlayersBonus.get(info.playerId);
+    if (!pb) return false;
+    const land = new Date(landMs);
+    const tTarget = land.getHours() * 3600000 + land.getMinutes() * 60000 + land.getSeconds() * 1000;
+    return intervalHour(hhmmToMs(pb.start_hour), hhmmToMs(pb.end_hour), tTarget);
+  }
+
   function innoReplaceSpecialCaracters(text) {
     return text
       .replaceAll("+", " ").replaceAll("%21", "!").replaceAll("%23", "#")
@@ -839,8 +901,12 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       window.location.href = game_data.link_base_pure + "overview_villages&mode=combined";
       return;
     }
-    if ($(".set_troops input[type=checkbox][value=land_specific]:visible").prop("checked")) {
-      UI.SuccessMessage("Landing window isn't enabled yet (Phase 6) — sending without it.", 2500);
+    const landSpecific = $(".set_troops input[type=checkbox][value=land_specific]:visible").prop("checked");
+    const start_window = new Date($(".set_troops .start_window:visible").val());
+    const stop_window = new Date($(".set_troops .stop_window:visible").val());
+    if (landSpecific) {
+      if (isNaN(start_window) || isNaN(stop_window)) { UI.ErrorMessage("Set both landing-window times.", 2000); return; }
+      if (stop_window - start_window < 0) { UI.ErrorMessage("Window end must be after the start.", 2000); return; }
     }
 
     try {
@@ -1036,7 +1102,33 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       if (list_coords.length === 0) { UI.ErrorMessage("No valid targets after filtering.", 2000); return; }
       shuffleArray(list_coords);
 
-      // --- distribute (bonus off / window off) ---
+      // --- night bonus (avoid landing during it) ---
+      const bonusNight = getBonusNight();
+      let mapPlayersBonus = new Map();
+      if (bonusNight.active == 2) {
+        const perPlayer = new Map();
+        for (const c of list_coords) {
+          const info = mapInfoVillages.get(c);
+          perPlayer.set(info.playerId, { playerId: info.playerId, villageId: info.villageId });
+        }
+        mapPlayersBonus = await getBonusNightForEach(Array.from(perPlayer.values()));
+      } else if (bonusNight.active == 1) {
+        for (const c of list_coords) {
+          const info = mapInfoVillages.get(c);
+          mapPlayersBonus.set(info.playerId, { start_hour: bonusNight.start_hour + ":00", end_hour: bonusNight.end_hour + ":00" });
+        }
+      }
+      const bonusActive = bonusNight.active == 1 || bonusNight.active == 2;
+
+      // does this origin->target attack satisfy bonus + window constraints?
+      const passesTimers = (origin, target, speed) => {
+        const landMs = serverNowMs() + calcDistance(origin, target) * speed;
+        if (bonusActive && landsInBonus(mapInfoVillages, mapPlayersBonus, target, landMs)) return false;
+        if (landSpecific && (landMs < start_window.getTime() || landMs > stop_window.getTime())) return false;
+        return true;
+      };
+
+      // --- distribute ---
       const list_href = [];
       const list_info_launch = [];
       const map_nr_destination = new Map();
@@ -1061,21 +1153,25 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
           obj.nr_from = 0;
           for (let j = 0; j < obj.nrFakes; j++) {
             if (list_coords.length === 0) break;
-            // respect "fakes per village": skip a target that's already full
-            let tries = 0;
-            while ((map_nr_destination.get(list_coords[k % list_coords.length]) || 0) > nrFakesPerVillage && tries < list_coords.length) {
-              k++; tries++;
+            // scan for a target that isn't full and clears the timing constraints
+            let assigned = false;
+            for (let attempt = 0; attempt < list_coords.length; attempt++) {
+              const target = list_coords[k % list_coords.length];
+              if ((map_nr_destination.get(target) || 0) > nrFakesPerVillage) { k++; continue; }
+              if (!passesTimers(obj.coordOrigin, target, obj.speedTroop)) { k++; continue; }
+              addLaunch(obj, target); k++; assigned = true; break;
             }
-            addLaunch(obj, list_coords[k % list_coords.length]);
-            k++;
+            if (!assigned) break; // no remaining target fits
           }
         }
       } else {
-        // nukes / fangs: one per source village, each target used once (spliced out)
+        // nukes / fangs: one per source village, each target used once (consumed)
         for (const obj of listFakesTemplate) {
           obj.nr_from = 0;
           if (list_coords.length === 0) break;
-          const target = list_coords.shift(); // consume a target
+          let idx = list_coords.findIndex((t) => passesTimers(obj.coordOrigin, t, obj.speedTroop));
+          if (idx === -1) continue; // no target lands acceptably for this source
+          const target = list_coords.splice(idx, 1)[0];
           addLaunch(obj, target);
         }
       }
@@ -1121,6 +1217,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
    * ------------------------------------------------------------------ */
   function launch(list_href, selectMod, nrSplits) {
     $(".open_tab").remove();
+    if (!list_href.length) { UI.ErrorMessage("No attacks matched (check targets / window / troops).", 2500); return; }
     if (selectMod === "open tabs") {
       const nrButtons = Math.ceil(list_href.length / nrSplits);
       let delayTab = parseInt(document.getElementById("delay_tabs").value);
