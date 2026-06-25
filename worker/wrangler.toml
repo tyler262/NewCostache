@@ -1,0 +1,15 @@
+name = "tw-fakes"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+# Serve the in-game script and its vendored dependency as static files.
+# GET /script.js and /localforage.js are served from here; everything else
+# (the /tabs and /tab/:id API) falls through to the Worker in worker.js.
+[assets]
+directory = "../public"
+
+# This binds the KV storage. The id is filled in after you run the
+# "wrangler kv namespace create" command (see ../docs/SETUP.md).
+[[kv_namespaces]]
+binding = "FAKES"
+id = "PASTE_YOUR_KV_ID_HERE"
