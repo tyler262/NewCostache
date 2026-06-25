@@ -347,8 +347,8 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
             <tr>
               <td>delay open tabs[ms]:</td>
               <td><input class="scriptInput" id="delay_tabs" type="number" value="200"></td>
-              <td><input class="btn evt-confirm-btn hide_btn_show" type="button" id="btn_show" value="Show" hidden></td>
-              <td><input class="btn evt-confirm-btn hide_btn_delete" type="button" id="btn_delete" value="Delete" hidden></td>
+              <td><input class="btn evt-confirm-btn hide_btn_show" type="button" id="btn_show" value="Show" style="display:none"></td>
+              <td><input class="btn evt-confirm-btn hide_btn_delete" type="button" id="btn_delete" value="Delete" style="display:none"></td>
             </tr>
           </table>
 
@@ -832,10 +832,6 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
    * ------------------------------------------------------------------ */
   async function startFakes() {
     const selectAttack = document.getElementById("select_type_attack").value;
-    if (selectAttack !== "fakes") {
-      UI.ErrorMessage("Only fakes are wired up so far (nukes/fangs come next).", 2500);
-      return;
-    }
     if (document.getElementById("combined_table") == null) {
       alert("Run this from Overview → Combined (overview_villages&mode=combined).");
       window.location.href = game_data.link_base_pure + "overview_villages&mode=combined";
@@ -878,7 +874,52 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       const table = document.getElementById("combined_table").getElementsByTagName("tr");
       const listFakesTemplate = [];
 
-      if (limitFake > 0) {
+      if (selectAttack !== "fakes") {
+        // --- nukes / fangs: send up to (available - reserve), keep if pop >= minPop ---
+        const minPop = (() => {
+          const v = parseInt($(".min_pop:visible").val());
+          return Number.isNaN(v) || v === 0 ? 200 : v;
+        })();
+        const send_troops = Array.from($(".allinputTroops input:visible")).map((e) => parseInt(e.value));
+        const reserve_troops = Array.from($(".allinputTroopsRes input:visible")).map((e) => parseInt(e.value));
+        for (let i = 0; i < send_troops.length; i++) {
+          send_troops[i] = Number.isNaN(send_troops[i]) || send_troops[i] < 0 ? 0 : send_troops[i];
+          reserve_troops[i] = Number.isNaN(reserve_troops[i]) || reserve_troops[i] < 0 ? 0 : reserve_troops[i];
+        }
+
+        for (let i = 1; i < table.length; i++) {
+          const vectorTroupes = Array.from(table[i].getElementsByClassName("unit-item")).map((e) => parseInt(e.innerText));
+          const currentCoord = table[i].getElementsByClassName("quickedit-label")[0].innerText.match(/\d+\|\d+/)[0];
+          const linkBase = table[i].getElementsByClassName("quickedit-content")[0].getElementsByTagName("a")[0].href.replace("overview", "place");
+
+          const availableTroupes = {};
+          let pop = 0;
+          for (let j = 0; j < send_troops.length; j++) {
+            const name = units[j];
+            const avail = vectorTroupes[j] - reserve_troops[j];
+            let v = Math.min(avail, send_troops[j]);
+            v = v <= 0 ? 0 : v;
+            availableTroupes[name] = v;
+            pop += troupesPop[name] * v;
+          }
+
+          // slowest present unit sets the speed
+          let speedTroop = speeds.ram;
+          if (availableTroupes["snob"] > 0) speedTroop = speeds.noble;
+          else if (availableTroupes["ram"] > 0 || availableTroupes["catapult"] > 0) speedTroop = speeds.ram;
+          else if (availableTroupes["sword"] > 0) speedTroop = speeds.sword;
+          else if (availableTroupes["spear"] > 0 || availableTroupes["axe"] > 0 || availableTroupes["archer"] > 0) speedTroop = speeds.axe;
+          else if (availableTroupes["light"] > 0 || availableTroupes["heavy"] > 0 || availableTroupes["marcher"] > 0) speedTroop = speeds.axe;
+          else speedTroop = speeds.scout;
+
+          if (pop >= minPop) {
+            listFakesTemplate.push({
+              templateFakes: availableTroupes, linkBase, coordOrigin: currentCoord,
+              speedTroop, nrFakes: 1, nrCells: send_troops.length,
+            });
+          }
+        }
+      } else if (limitFake > 0) {
         // Build a minimal-population fake template that still clears the fake limit.
         for (let i = 1; i < table.length; i++) {
           const vectorTroupes = Array.from(table[i].getElementsByClassName("unit-item")).map((e) => parseInt(e.innerText));
@@ -981,7 +1022,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       const activePanel = document.getElementsByClassName("panel active")[0];
       let list_coords = activePanel ? (activePanel.getElementsByTagName("textarea")[0].value.match(/\d+\|\d+/g) || []) : [];
       if (list_coords.length === 0) { UI.ErrorMessage("No target coords in the active tab.", 2000); return; }
-      list_coords = Array.from(new Set(list_coords)); // dedupe for fakes
+      if (selectAttack === "fakes") list_coords = Array.from(new Set(list_coords)); // dedupe for fakes only
 
       // drop non-existent, barbs, and (if any) allied villages
       list_coords = list_coords.filter((c) => {
@@ -998,30 +1039,42 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       const list_info_launch = [];
       const map_nr_destination = new Map();
       let k = 0;
-      for (const obj of listFakesTemplate) {
-        obj.nr_from = 0;
-        for (let j = 0; j < obj.nrFakes; j++) {
-          if (list_coords.length === 0) break;
 
-          // respect "fakes per village": skip a target that's already full
-          let tries = 0;
-          while ((map_nr_destination.get(list_coords[k % list_coords.length]) || 0) > nrFakesPerVillage && tries < list_coords.length) {
-            k++; tries++;
+      const addLaunch = (obj, target) => {
+        let href = obj.linkBase + "&";
+        Object.keys(obj.templateFakes).forEach((key) => { href += key + "=" + obj.templateFakes[key] + "&"; });
+        href += "x=" + target.split("|")[0] + "&y=" + target.split("|")[1] + "&";
+        obj.coordDestination = target;
+        obj.nr_from += 1;
+        obj.landing_time = calculateLandingTime(obj.coordOrigin, target, obj.speedTroop);
+        obj.coordOriginId = mapInfoVillages.get(obj.coordOrigin)?.villageId;
+        obj.coordDestinationId = mapInfoVillages.get(target)?.villageId;
+        map_nr_destination.set(target, (map_nr_destination.get(target) || 0) + 1);
+        list_info_launch.push({ ...obj });
+        list_href.push(href);
+      };
+
+      if (selectAttack === "fakes") {
+        for (const obj of listFakesTemplate) {
+          obj.nr_from = 0;
+          for (let j = 0; j < obj.nrFakes; j++) {
+            if (list_coords.length === 0) break;
+            // respect "fakes per village": skip a target that's already full
+            let tries = 0;
+            while ((map_nr_destination.get(list_coords[k % list_coords.length]) || 0) > nrFakesPerVillage && tries < list_coords.length) {
+              k++; tries++;
+            }
+            addLaunch(obj, list_coords[k % list_coords.length]);
+            k++;
           }
-          const finalTarget = list_coords[k % list_coords.length];
-          let href = obj.linkBase + "&";
-          Object.keys(obj.templateFakes).forEach((key) => { href += key + "=" + obj.templateFakes[key] + "&"; });
-          href += "x=" + finalTarget.split("|")[0] + "&y=" + finalTarget.split("|")[1] + "&";
-
-          obj.coordDestination = finalTarget;
-          obj.nr_from += 1;
-          obj.landing_time = calculateLandingTime(obj.coordOrigin, finalTarget, obj.speedTroop);
-          obj.coordOriginId = mapInfoVillages.get(obj.coordOrigin)?.villageId;
-          obj.coordDestinationId = mapInfoVillages.get(finalTarget)?.villageId;
-          map_nr_destination.set(finalTarget, (map_nr_destination.get(finalTarget) || 0) + 1);
-          list_info_launch.push({ ...obj });
-          list_href.push(href);
-          k++;
+        }
+      } else {
+        // nukes / fangs: one per source village, each target used once (spliced out)
+        for (const obj of listFakesTemplate) {
+          obj.nr_from = 0;
+          if (list_coords.length === 0) break;
+          const target = list_coords.shift(); // consume a target
+          addLaunch(obj, target);
         }
       }
 
@@ -1030,6 +1083,23 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
 
       $(".hide_btn_show").show();
       $("#btn_show").off("click").on("click", () => showLaunches(list_info_launch));
+
+      // Delete used target coords from the active tab (nukes/fangs on a personal tab).
+      const activeIsOwn = document.getElementsByClassName("panel active")[0]?.classList.contains("own");
+      if (selectAttack !== "fakes" && activeIsOwn) {
+        $(".hide_btn_delete").show();
+        $("#btn_delete").off("click").on("click", () => {
+          if (!window.confirm("Remove the used target coords from this list?")) return;
+          const ta = document.getElementsByClassName("panel active")[0].getElementsByTagName("textarea")[0];
+          let remaining = ta.value.match(/\d+\|\d+/g) || [];
+          const used = new Set(list_info_launch.map((o) => o.coordDestination));
+          remaining = remaining.filter((c) => !used.has(c));
+          ta.value = remaining.join(" ");
+          saveOwnData();
+        });
+      } else {
+        $(".hide_btn_delete").hide();
+      }
 
       shuffleArray(list_href);
       launch(list_href, selectMod, nrSplits);
