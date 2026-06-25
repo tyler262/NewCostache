@@ -322,6 +322,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
               <textarea class="scriptInput" rows="9" placeholder="500|512 501|498 ..."></textarea>
             </div>
           </div>
+          <div style="margin-top:6px"><input class="btn evt-confirm-btn" type="button" id="btn_grabber" value="Coord grabber"></div>
           <div id="div_get_coords" style="margin:10px" hidden></div>
           <ul class="tabs" id="strip_tribe"></ul>
           <div id="all_tribe_tabs"></div>
@@ -605,7 +606,8 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       status.className = "tfh-meta tribe_status";
       status.textContent = "Publishing…";
       try {
-        const out = await apiPutTab(id, { name, coords, by: game_data.player.name });
+        const grabberInputs = document.getElementById("table_get_coords") ? readGrabberInputs() : [];
+        const out = await apiPutTab(id, { name, coords, by: game_data.player.name, grabberInputs });
         status.className = "tfh-ok tribe_status";
         status.textContent = `Published ${out.count} coord(s).`;
       } catch (e) {
@@ -1170,6 +1172,97 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
   }
 
   /* ================================================================== *
+   *  COORD GRABBER — filter the world's villages into a coord list
+   * ================================================================== */
+  function getContinent(coord) {
+    const [x, y] = coord.split("|").map(Number);
+    return "" + parseInt(y / 100) + parseInt(x / 100);
+  }
+
+  function getCoordsGrabber(mapVillage) {
+    const splitList = (id) =>
+      Array.from(document.getElementById(id).value.toLowerCase().split(",")).map((s) => s.trim()).filter(Boolean);
+    const players = splitList("input_players");
+    const tribes = splitList("input_tribes");
+    const continents = Array.from(document.getElementById("input_continents").value.split(",")).map((s) => s.trim()).filter(Boolean);
+    const num = (id) => parseInt(document.getElementById(id).value);
+    const xMin = num("input_x_min"), yMin = num("input_y_min"), xMax = num("input_x_max"), yMax = num("input_y_max");
+    const radius = num("input_radius"), xCenter = num("input_center_x"), yCenter = num("input_center_y");
+
+    const result = [];
+    Array.from(mapVillage.keys()).forEach((coord) => {
+      try {
+        const obj = mapVillage.get(coord);
+        let ok = true;
+        if (players.length && !players.includes(obj.playerName.toLowerCase())) ok = false;
+        if (ok && tribes.length && !tribes.includes((obj.tribeName || "").toLowerCase())) ok = false;
+        if (ok && continents.length && !continents.includes(getContinent(coord))) ok = false;
+        const [x, y] = coord.split("|").map(Number);
+        if (ok && !Number.isNaN(xMin)) ok = x >= xMin;
+        if (ok && !Number.isNaN(yMin)) ok = y >= yMin;
+        if (ok && !Number.isNaN(xMax)) ok = x <= xMax;
+        if (ok && !Number.isNaN(yMax)) ok = y <= yMax;
+        if (ok && !Number.isNaN(radius) && !Number.isNaN(xCenter) && !Number.isNaN(yCenter)) {
+          ok = calcDistance(xCenter + "|" + yCenter, coord) < radius;
+        }
+        if (ok) result.push(coord);
+      } catch (e) { /* skip bad rows */ }
+    });
+    return result.join(" ");
+  }
+
+  const GRAB_FIELDS = ["input_players", "input_tribes", "input_continents", "input_x_min", "input_y_min", "input_x_max", "input_y_max", "input_radius", "input_center_x", "input_center_y"];
+
+  function readGrabberInputs() {
+    return GRAB_FIELDS.map((id) => { const el = document.getElementById(id); return el ? el.value : ""; });
+  }
+  function writeGrabberInputs(values) {
+    if (!Array.isArray(values)) return;
+    GRAB_FIELDS.forEach((id, i) => { const el = document.getElementById(id); if (el && values[i] != null) el.value = values[i]; });
+  }
+
+  function createTableGetCoords() {
+    if (document.getElementById("table_get_coords")) { $("#div_get_coords").toggle(200); return; }
+    const html = `
+      <table id="table_get_coords" class="scriptTable" style="width:98%">
+        <tr><td>Players:</td><td colspan="4"><input type="text" class="scriptInput" id="input_players" style="width:96%" placeholder="player1, player2"></td></tr>
+        <tr><td>Tribes:</td><td colspan="4"><input type="text" class="scriptInput" id="input_tribes" style="width:96%" placeholder="tribe1, tribe2"></td></tr>
+        <tr><td>Continents:</td><td colspan="4"><input type="text" class="scriptInput" id="input_continents" style="width:96%" placeholder="54,55,65"></td></tr>
+        <tr><td>Min coord:</td><td colspan="2"><input type="number" class="scriptInput" id="input_x_min" placeholder="X"></td><td colspan="2"><input type="number" class="scriptInput" id="input_y_min" placeholder="Y"></td></tr>
+        <tr><td>Max coord:</td><td colspan="2"><input type="number" class="scriptInput" id="input_x_max" placeholder="X"></td><td colspan="2"><input type="number" class="scriptInput" id="input_y_max" placeholder="Y"></td></tr>
+        <tr><td>Dist from center:</td><td><input type="number" class="scriptInput" id="input_radius" placeholder="R"></td><td>from:</td><td><input type="number" class="scriptInput" id="input_center_x" placeholder="X"></td><td><input type="number" class="scriptInput" id="input_center_y" placeholder="Y"></td></tr>
+        <tr><td colspan="5" style="text-align:center"><input class="btn evt-confirm-btn" type="button" id="btn_grab_run" value="Grab into active tab"> <span class="tfh-meta" id="grab_status"></span></td></tr>
+      </table>`;
+    document.getElementById("div_get_coords").innerHTML = html;
+    document.getElementById("div_get_coords").hidden = false;
+
+    writeGrabberInputs(JSON.parse(localStorage.getItem(game_data.world + "grabberInputs") || "null"));
+    $("#table_get_coords input").on("change input", () => {
+      localStorage.setItem(game_data.world + "grabberInputs", JSON.stringify(readGrabberInputs()));
+    });
+
+    $("#btn_grab_run").on("click", async () => {
+      const status = document.getElementById("grab_status");
+      status.className = "tfh-meta"; status.textContent = "grabbing…";
+      try {
+        const map = await getInfoVillages();
+        const coords = getCoordsGrabber(map);
+        const n = coords ? coords.split(" ").length : 0;
+        const active = document.getElementsByClassName("panel active")[0];
+        if (!active) { status.textContent = "no active tab"; return; }
+        const ta = active.getElementsByTagName("textarea")[0];
+        ta.value = coords;
+        const p = active.getElementsByTagName("p");
+        (p[p.length - 1]).textContent = "nr coords: " + n;
+        if (active.classList.contains("own")) saveOwnData();
+        status.className = "tfh-ok"; status.textContent = `grabbed ${n} coord(s)`;
+      } catch (e) {
+        status.className = "tfh-err"; status.textContent = "grab failed (run from Combined overview)";
+      }
+    });
+  }
+
+  /* ================================================================== *
    *  BOOT
    * ================================================================== */
   function main() {
@@ -1185,6 +1278,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
 
     $("#select_type_attack").on("change", applyAttackTypeVisibility);
     $("#btn_start").on("click", startFakes);
+    $("#btn_grabber").on("click", createTableGetCoords);
   }
 
   (async () => {
