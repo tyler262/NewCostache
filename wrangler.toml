@@ -1,0 +1,9 @@
+name = "tw-fakes"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# This binds the KV storage. The id is filled in after you run the
+# "wrangler kv namespace create" command (see SETUP.md).
+[[kv_namespaces]]
+binding = "FAKES"
+id = "PASTE_YOUR_KV_ID_HERE"
