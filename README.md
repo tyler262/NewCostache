@@ -29,5 +29,7 @@ runtime. This version moves storage to a Cloudflare Worker so:
 - **`docs/SETUP.md`** — deploy the Worker and hand out the Quickbar link.
 - **`docs/USER_GUIDE.md`** — how members and leaders use it (the living usage doc).
 
-> Status: in active rebuild. See the phased plan in the project history. Fakes are
-> implemented first, then nukes/fangs, the coord grabber, and timing features.
+> Status: feature-complete rebuild. Fakes, nukes/fangs, the coord grabber, night-bonus
+> and landing-window timing, shared/personal tabs, and a theme picker are all in.
+> Verified offline (Node + JSDOM harnesses); confirm live in-game with the checklist
+> in `docs/USER_GUIDE.md`.

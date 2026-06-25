@@ -49,16 +49,29 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
   const nrTroopSelect = 13;
 
   /* ------------------------------------------------------------------ *
-   *  Theme (static defaults for now; Phase 7 adds switching)
+   *  Themes (CSS-variable presets; switchable from the header)
    * ------------------------------------------------------------------ */
-  const textColor = "#ffffff";
-  const backgroundInput = "#000000";
-  const borderColor = "#C5979D";
-  const backgroundContainer = "#2B193D";
-  const backgroundHeader = "#2C365E";
-  const backgroundMainTable = "#484D6D";
-  const backgroundInnerTable = "#4B8F8C";
   const widthInterface = 50; // percent
+  const LS_THEME = "newcostache_theme";
+  const THEMES = {
+    default: { text: "#ffffff", input: "#000000", border: "#C5979D", container: "#2B193D", header: "#2C365E", main: "#484D6D", inner: "#4B8F8C" },
+    slate:   { text: "#E6E6E6", input: "#10141a", border: "#5F6B7A", container: "#1B222B", header: "#273341", main: "#2F3B49", inner: "#3C4D5E" },
+    forest:  { text: "#EAF3E6", input: "#0e150e", border: "#6FA06A", container: "#16271A", header: "#274029", main: "#315C2B", inner: "#214F4B" },
+    crimson: { text: "#FCE8E8", input: "#170808", border: "#B05555", container: "#2A0F12", header: "#54160B", main: "#710627", inner: "#9E1946" },
+  };
+
+  function applyTheme(name) {
+    const t = THEMES[name] || THEMES.default;
+    const r = document.documentElement.style;
+    r.setProperty("--nc-text", t.text);
+    r.setProperty("--nc-input", t.input);
+    r.setProperty("--nc-border", t.border);
+    r.setProperty("--nc-container", t.container);
+    r.setProperty("--nc-header", t.header);
+    r.setProperty("--nc-main", t.main);
+    r.setProperty("--nc-inner", t.inner);
+    localStorage.setItem(LS_THEME, name);
+  }
 
   /* ------------------------------------------------------------------ *
    *  Worker API (replaces the old Dropbox read/write)
@@ -153,41 +166,36 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
   function injectCSS() {
     const css = `
       .scriptContainer{position:fixed;top:60px;left:60px;z-index:99999;
-        width:${widthInterface}%;background:${backgroundContainer};color:${textColor};
-        border:2px solid ${borderColor};border-radius:8px;font:12px/1.4 Verdana,sans-serif;
+        width:${widthInterface}%;background:var(--nc-container);color:var(--nc-text);
+        border:2px solid var(--nc-border);border-radius:8px;font:12px/1.4 Verdana,sans-serif;
         box-shadow:0 6px 26px rgba(0,0,0,.55)}
-      .scriptHeader{position:relative;background:${backgroundHeader};color:${textColor};
+      .scriptHeader{position:relative;background:var(--nc-header);color:var(--nc-text);
         border-radius:6px 6px 0 0;padding:6px 10px;min-height:34px;cursor:move}
       .scriptHeader h2{margin:0;font-size:14px;text-align:center}
       .scriptFooter{padding:4px 10px;text-align:center;font-size:10px;opacity:.7}
       .scriptFooter h5{margin:4px 0}
       #div_body{padding:10px}
-      .scriptContainer select,.scriptInput{background:${backgroundInput};color:${textColor};
-        border:1px solid ${borderColor};border-radius:4px;padding:3px}
-      .scriptTable{width:100%;border-collapse:collapse;background:${backgroundMainTable}}
-      .scriptTable td{border:1px solid ${borderColor};text-align:center;padding:3px}
+      .scriptContainer select,.scriptInput{background:var(--nc-input);color:var(--nc-text);
+        border:1px solid var(--nc-border);border-radius:4px;padding:3px}
+      .scriptTable{width:100%;border-collapse:collapse;background:var(--nc-main)}
+      .scriptTable td{border:1px solid var(--nc-border);text-align:center;padding:3px}
       .scriptTable img{vertical-align:middle}
-      .scriptTableAlternate{border-collapse:collapse;background:${backgroundInnerTable};margin:0 auto}
-      .scriptTableAlternate td{border:1px solid ${borderColor};padding:4px;text-align:center}
+      .scriptTableAlternate{border-collapse:collapse;background:var(--nc-inner);margin:0 auto}
+      .scriptTableAlternate td{border:1px solid var(--nc-border);padding:4px;text-align:center}
       .btn.evt-confirm-btn{cursor:pointer}
       .tab-panels .tabs{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:2px}
-      .tab-panels .tabs li{background:${backgroundHeader};color:${textColor};padding:4px 8px;
+      .tab-panels .tabs li{background:var(--nc-header);color:var(--nc-text);padding:4px 8px;
         border-radius:4px 4px 0 0;cursor:pointer;font-size:11px;display:flex;align-items:center;gap:4px}
-      .tab-panels .tabs li.active{background:${backgroundInnerTable};font-weight:bold}
-      .tab-panels .tabs li.li_tribe{background:#3a2a52}
-      .tab-panels .tabs li.li_tribe.active{background:#5a3f86}
+      .tab-panels .tabs li.active{background:var(--nc-inner);font-weight:bold}
+      .tab-panels .tabs li.li_tribe{filter:brightness(1.15)}
       .remove_tab{cursor:pointer}
-      .panel{display:none;background:${backgroundMainTable};padding:8px;border-radius:0 4px 4px 4px}
+      .panel{display:none;background:var(--nc-main);padding:8px;border-radius:0 4px 4px 4px}
       .panel.active{display:block}
       .panel textarea.scriptInput{width:100%;box-sizing:border-box;font:11px monospace}
       .tfh-meta{font-size:10px;opacity:.75;margin:2px 0}
       .tfh-err{color:#ff8a8a;font-weight:bold}
       .tfh-ok{color:#9be29b;font-weight:bold}
       .open_tab{margin:4px}
-      .autocomplete-items{position:absolute;border:1px solid ${borderColor};z-index:100000;
-        background:${backgroundInput};color:${textColor};max-height:160px;overflow:auto}
-      .autocomplete-items div{padding:4px 6px;cursor:pointer}
-      .autocomplete-active{background:${backgroundInnerTable}}
     `;
     const style = document.createElement("style");
     style.id = "newcostache-style";
@@ -239,6 +247,12 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
             <option value="fangs">fangs</option>
           </select>
           <span id="tfh_role"></span>
+          <select id="nc_theme" style="margin-left:6px">
+            <option value="default">theme: default</option>
+            <option value="slate">theme: slate</option>
+            <option value="forest">theme: forest</option>
+            <option value="crimson">theme: crimson</option>
+          </select>
         </div>
       </div>
 
@@ -1363,8 +1377,12 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
    *  BOOT
    * ================================================================== */
   function main() {
+    applyTheme(localStorage.getItem(LS_THEME) || "default");
     injectCSS();
     createMainInterface();
+    const savedTheme = localStorage.getItem(LS_THEME) || "default";
+    document.getElementById("nc_theme").value = savedTheme;
+    $("#nc_theme").on("change", function () { applyTheme(this.value); });
     showLogin(false);
     saveNrFakes();
     initializationNrFakes();
