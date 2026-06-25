@@ -696,15 +696,407 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
     });
   }
 
+  /* ================================================================== *
+   *  ENGINE — speeds, distance, village info cache
+   * ================================================================== */
+  function getSpeedConstant() {
+    const cached = localStorage.getItem(game_data.world + "speedWorld");
+    if (cached !== null) return JSON.parse(cached);
+    const data = httpGet("/interface.php?func=get_config");
+    const doc = new DOMParser().parseFromString(data, "text/html");
+    const obj = {
+      worldSpeed: Number(doc.getElementsByTagName("speed")[0].innerHTML),
+      unitSpeed: Number(doc.getElementsByTagName("unit_speed")[0].innerHTML),
+    };
+    localStorage.setItem(game_data.world + "speedWorld", JSON.stringify(obj));
+    return obj;
+  }
+
+  let _speeds = null;
+  function getSpeeds() {
+    if (_speeds) return _speeds;
+    const c = getSpeedConstant();
+    const f = (base) => (base * 1000) / (c.worldSpeed * c.unitSpeed); // ms per field
+    _speeds = {
+      noble: f(2100), ram: f(1800), sword: f(1320),
+      axe: f(1080), light: f(600), scout: f(540),
+    };
+    return _speeds;
+  }
+
+  function calcDistance(c1, c2) {
+    const [x1, y1] = c1.split("|").map(Number);
+    const [x2, y2] = c2.split("|").map(Number);
+    return Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
+  }
+
+  function shuffleArray(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+  }
+
+  function parseDate(time) {
+    const d = new Date(time);
+    const p = (n) => ("00" + n).slice(-2);
+    return `${p(d.getMonth() + 1)}/${p(d.getDate())}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+
+  function serverNowMs() {
+    const t = document.getElementById("serverTime").innerText;
+    const d = document.getElementById("serverDate").innerText.split("/"); // dd/mm/yyyy
+    return new Date(`${d[1]}/${d[0]}/${d[2]} ${t}`).getTime();
+  }
+
+  function calculateLandingTime(origin, target, speedTroop) {
+    return parseDate(serverNowMs() + calcDistance(origin, target) * speedTroop);
+  }
+
+  function innoReplaceSpecialCaracters(text) {
+    return text
+      .replaceAll("+", " ").replaceAll("%21", "!").replaceAll("%23", "#")
+      .replaceAll("%24", "$").replaceAll("%25", "%").replaceAll("%28", "(")
+      .replaceAll("%29", ")").replaceAll("%2A", "*").replaceAll("%2B", "+")
+      .replaceAll("%2C", ",").replaceAll("%2F ", "/").replaceAll("%3A", ":")
+      .replaceAll("%3D", "=").replaceAll("%3F", "?").replaceAll("%40", "@")
+      .replaceAll("%5B", "[").replaceAll("%5D", "]").replaceAll("%7C", "|");
+  }
+
+  function replaceSpecialCaracters(data) {
+    const map = { "ț": "t", "Ț": "T", "Ă": "A", "ă": "a", "Â": "A", "Ș": "S", "ș": "s", "Î": "I", "î": "i" };
+    let out = "";
+    for (const ch of data) out += map[ch] != null ? map[ch] : ch;
+    return out;
+  }
+
+  // Coord -> village info, cached in IndexedDB (localforage), refreshed hourly.
+  async function getInfoVillages() {
+    const cacheKey = game_data.world + "infoVillages";
+    const url = window.location.href.split("/game.php")[0];
+    const currentMs = serverNowMs();
+
+    const build = () => {
+      const dataVillage = httpGet(url + "/map/village.txt").split(/\r?\n/);
+      const dataPlayer = httpGet(url + "/map/player.txt").split(/\r?\n/);
+      const dataAlly = httpGet(url + "/map/ally.txt").split(/\r?\n/);
+      const mapAlly = new Map();
+      const mapPlayer = new Map();
+      const mapVillage = new Map();
+      for (let i = 0; i < dataAlly.length - 1; i++) {
+        const c = dataAlly[i].split(",");
+        mapAlly.set(c[0], innoReplaceSpecialCaracters(c[1]));
+      }
+      for (let i = 0; i < dataPlayer.length - 1; i++) {
+        const c = dataPlayer[i].split(",");
+        mapPlayer.set(c[0], {
+          allyId: c[2],
+          playerName: innoReplaceSpecialCaracters(c[1]),
+          tribeName: mapAlly.get(c[2]) == undefined ? "none" : mapAlly.get(c[2]),
+        });
+      }
+      for (let i = 0; i < dataVillage.length; i++) {
+        const c = dataVillage[i].split(",");
+        const p = mapPlayer.get(c[4]);
+        if (p != undefined) {
+          mapVillage.set(c[2] + "|" + c[3], {
+            villageId: c[0], playerId: c[4], points: c[5],
+            allyId: p.allyId, playerName: p.playerName, tribeName: p.tribeName,
+          });
+        }
+      }
+      return mapVillage;
+    };
+
+    let mapVillage;
+    const cached = window.localforage ? await window.localforage.getItem(cacheKey).catch(() => null) : null;
+    if (cached == undefined) {
+      mapVillage = build();
+      const payload = replaceSpecialCaracters(JSON.stringify({ datetime: currentMs, data: Array.from(mapVillage.entries()) }));
+      if (window.localforage) await window.localforage.setItem(cacheKey, payload).catch(() => {});
+    } else {
+      const obj = JSON.parse(cached);
+      mapVillage = new Map(obj.data);
+      if (currentMs - new Date(obj.datetime).getTime() > 3600 * 1000) {
+        mapVillage = build();
+        const payload = replaceSpecialCaracters(JSON.stringify({ datetime: currentMs, data: Array.from(mapVillage.entries()) }));
+        if (window.localforage) await window.localforage.setItem(cacheKey, payload).catch(() => {});
+      }
+    }
+    return mapVillage;
+  }
+
   /* ------------------------------------------------------------------ *
-   *  Engine entry point (Phase 3 will port the real startFakes)
+   *  startFakes — FAKES path (nukes/fangs land in Phase 4;
+   *  night-bonus + land-window land in Phase 6)
    * ------------------------------------------------------------------ */
   async function startFakes() {
-    if (typeof UI !== "undefined") {
-      UI.ErrorMessage("Engine arrives in the next phase (Phase 3).", 2000);
-    } else {
-      alert("Engine arrives in the next phase (Phase 3).");
+    const selectAttack = document.getElementById("select_type_attack").value;
+    if (selectAttack !== "fakes") {
+      UI.ErrorMessage("Only fakes are wired up so far (nukes/fangs come next).", 2500);
+      return;
     }
+    if (document.getElementById("combined_table") == null) {
+      alert("Run this from Overview → Combined (overview_villages&mode=combined).");
+      window.location.href = game_data.link_base_pure + "overview_villages&mode=combined";
+      return;
+    }
+    if ($(".set_troops input[type=checkbox][value=land_specific]:visible").prop("checked")) {
+      UI.SuccessMessage("Landing window isn't enabled yet (Phase 6) — sending without it.", 2500);
+    }
+
+    try {
+      const speeds = getSpeeds();
+      const mapInfoVillages = await getInfoVillages();
+      const selectMod = document.getElementById("select_option_fakes").value;
+
+      let nrFakes = parseInt(document.getElementById("nr_fakes").value);
+      let nrSplits = parseInt(document.getElementById("nr_split").value);
+      let nrFakesPerVillage = parseInt(document.getElementById("nr_fakes_per_village").value);
+      nrSplits = Number.isNaN(nrSplits) || nrSplits === 0 ? 5 : nrSplits;
+      nrFakes = Number.isNaN(nrFakes) || nrFakes === 0 ? 1 : nrFakes;
+      nrFakesPerVillage = Number.isNaN(nrFakesPerVillage) || nrFakesPerVillage === 0 ? 4 : nrFakesPerVillage;
+      nrFakesPerVillage--;
+
+      // No ally list in this model -> nothing filtered out as "ally". (See README.)
+      const ally_tribe = [];
+
+      // If re-running after opening a batch, refresh the combined table HTML.
+      if (document.getElementsByClassName("open_tab").length > 0) {
+        const text = httpGet(window.location.href);
+        const table = text.match(/<table id="combined_table"((.|\n)+)/)[0].split("</table>")[0] + "</table>";
+        document.getElementById("combined_table").innerHTML = table;
+      }
+
+      // --- read the per-unit "send" template (min/number) ---
+      const mapTroupes = new Map();
+      for (let i = 0; i < unitsLength; i++) {
+        mapTroupes.set(units[i], document.getElementById(units[i] + "Troupe").value);
+      }
+
+      const limitFake = getFakeLimit() / 100;
+      const table = document.getElementById("combined_table").getElementsByTagName("tr");
+      const listFakesTemplate = [];
+
+      if (limitFake > 0) {
+        // Build a minimal-population fake template that still clears the fake limit.
+        for (let i = 1; i < table.length; i++) {
+          const vectorTroupes = Array.from(table[i].getElementsByClassName("unit-item")).map((e) => parseInt(e.innerText));
+          const currentCoord = table[i].getElementsByClassName("quickedit-label")[0].innerText.match(/\d+\|\d+/)[0];
+          const linkBase = table[i].getElementsByClassName("quickedit-content")[0].getElementsByTagName("a")[0].href.replace("overview", "place");
+          const info = mapInfoVillages.get(currentCoord);
+          if (!info) continue;
+          const limitPop = parseInt(info.points * limitFake) + 10;
+
+          const availableTroupes = {};
+          let totalPop = 0;
+          Array.from(mapTroupes.keys()).forEach((key, index) => {
+            const sel = mapTroupes.get(key);
+            const cur = vectorTroupes[index];
+            if (sel != 0 && cur > nrFakes) {
+              if (sel > 0 && cur >= sel * nrFakes) {
+                availableTroupes[key] = { value: sel * nrFakes, static: "true" };
+                totalPop += nrFakes * troupesPop[key] * sel;
+              } else {
+                availableTroupes[key] = { value: cur, static: "false" };
+                totalPop += cur * troupesPop[key];
+              }
+            }
+          });
+
+          const availableFakesTotal = totalPop / limitPop;
+          const templateFakes = {};
+          let totalPopTemplate = 0;
+          Object.keys(availableTroupes).forEach((key) => {
+            if (availableFakesTotal > 1.2) {
+              const t = availableTroupes[key];
+              const troupe = t.static === "false"
+                ? Math.ceil(t.value / availableFakesTotal)
+                : t.value / nrFakes;
+              templateFakes[key] = troupe;
+              totalPopTemplate += troupe * troupesPop[key];
+            }
+          });
+
+          for (let k = 0; k < 30; k++) {
+            Object.keys(templateFakes).forEach((key) => {
+              const pop = troupesPop[key];
+              if (totalPopTemplate - limitPop >= 1 && pop === 1) { templateFakes[key]--; totalPopTemplate -= 1; }
+              if (totalPopTemplate - limitPop >= 2 && pop === 2 && k % 2 === 0 && availableTroupes[key].static === "false") { templateFakes[key]--; totalPopTemplate -= 2; }
+              if (totalPopTemplate - limitPop >= 4 && pop === 4 && k % 2 === 0) { templateFakes[key]--; totalPopTemplate -= 4; }
+              if (totalPopTemplate - limitPop >= 6 && pop === 6 && k % 4 === 0) { templateFakes[key]--; totalPopTemplate -= 6; }
+              if (totalPopTemplate - limitPop >= 5 && pop === 5 && k % 5 === 0 && templateFakes[key] > 1) { templateFakes[key]--; totalPopTemplate -= 5; }
+              if (totalPopTemplate - limitPop >= 8 && pop === 8 && k % 5 === 0 && templateFakes[key] > 1) { templateFakes[key]--; totalPopTemplate -= 8; }
+              if (templateFakes[key] === 0) delete templateFakes[key];
+            });
+            if (totalPopTemplate === limitPop) break;
+          }
+
+          const minFakes = Math.min(nrFakes, parseInt(availableFakesTotal));
+          if (availableFakesTotal > 1.2 && (templateFakes["ram"] >= 1 || templateFakes["catapult"] >= 1)) {
+            listFakesTemplate.push({
+              templateFakes, nrFakes: minFakes, limitPop, totalPopTemplate,
+              linkBase, coordOrigin: currentCoord, speedTroop: speeds.ram, nrCells: mapTroupes.size,
+            });
+          }
+        }
+      } else {
+        // No fake limit: just send the chosen spy/ram/cat counts.
+        for (let i = 1; i < table.length; i++) {
+          const vectorTroupes = Array.from(table[i].getElementsByClassName("unit-item")).map((e) => parseInt(e.innerText));
+          const currentCoord = table[i].getElementsByClassName("quickedit-label")[0].innerText.match(/\d+\|\d+/)[0];
+          const linkBase = table[i].getElementsByClassName("quickedit-content")[0].getElementsByTagName("a")[0].href.replace("overview", "place");
+          const availableTroupes = {};
+          Array.from(mapTroupes.keys()).forEach((key, index) => {
+            const sel = mapTroupes.get(key);
+            const cur = vectorTroupes[index];
+            if (sel > 0 && sel !== "min" && (key === "spy" || key === "ram" || key === "catapult")) {
+              if (cur >= sel * nrFakes) availableTroupes[key] = sel * nrFakes;
+            }
+          });
+          const templateFakes = {};
+          if (availableTroupes["spy"] >= nrFakes && availableTroupes["ram"] >= nrFakes) {
+            templateFakes["spy"] = parseInt(availableTroupes["spy"] / nrFakes);
+            templateFakes["ram"] = parseInt(availableTroupes["ram"] / nrFakes);
+          } else if (availableTroupes["spy"] >= nrFakes && availableTroupes["catapult"] >= nrFakes) {
+            templateFakes["spy"] = parseInt(availableTroupes["spy"] / nrFakes);
+            templateFakes["catapult"] = parseInt(availableTroupes["catapult"] / nrFakes);
+          } else if (availableTroupes["ram"] >= nrFakes) {
+            templateFakes["ram"] = parseInt(availableTroupes["ram"] / nrFakes);
+          } else if (availableTroupes["catapult"] >= nrFakes) {
+            templateFakes["catapult"] = parseInt(availableTroupes["catapult"] / nrFakes);
+          }
+          if (templateFakes["ram"] >= 1 || templateFakes["catapult"] >= 1) {
+            listFakesTemplate.push({
+              templateFakes, nrFakes, limitPop: 0, totalPopTemplate: 0,
+              linkBase, coordOrigin: currentCoord, speedTroop: speeds.ram, nrCells: mapTroupes.size,
+            });
+          }
+        }
+      }
+
+      shuffleArray(listFakesTemplate);
+
+      // --- target coords from the active tab ---
+      const activePanel = document.getElementsByClassName("panel active")[0];
+      let list_coords = activePanel ? (activePanel.getElementsByTagName("textarea")[0].value.match(/\d+\|\d+/g) || []) : [];
+      if (list_coords.length === 0) { UI.ErrorMessage("No target coords in the active tab.", 2000); return; }
+      list_coords = Array.from(new Set(list_coords)); // dedupe for fakes
+
+      // drop non-existent, barbs, and (if any) allied villages
+      list_coords = list_coords.filter((c) => {
+        const info = mapInfoVillages.get(c);
+        if (!info || info.playerId === "0") return false;
+        if (ally_tribe.length && ally_tribe.includes(info.allyId)) return false;
+        return true;
+      });
+      if (list_coords.length === 0) { UI.ErrorMessage("No valid targets after filtering.", 2000); return; }
+      shuffleArray(list_coords);
+
+      // --- distribute (bonus off / window off) ---
+      const list_href = [];
+      const list_info_launch = [];
+      const map_nr_destination = new Map();
+      let k = 0;
+      for (const obj of listFakesTemplate) {
+        obj.nr_from = 0;
+        for (let j = 0; j < obj.nrFakes; j++) {
+          if (list_coords.length === 0) break;
+
+          // respect "fakes per village": skip a target that's already full
+          let tries = 0;
+          while ((map_nr_destination.get(list_coords[k % list_coords.length]) || 0) > nrFakesPerVillage && tries < list_coords.length) {
+            k++; tries++;
+          }
+          const finalTarget = list_coords[k % list_coords.length];
+          let href = obj.linkBase + "&";
+          Object.keys(obj.templateFakes).forEach((key) => { href += key + "=" + obj.templateFakes[key] + "&"; });
+          href += "x=" + finalTarget.split("|")[0] + "&y=" + finalTarget.split("|")[1] + "&";
+
+          obj.coordDestination = finalTarget;
+          obj.nr_from += 1;
+          obj.landing_time = calculateLandingTime(obj.coordOrigin, finalTarget, obj.speedTroop);
+          obj.coordOriginId = mapInfoVillages.get(obj.coordOrigin)?.villageId;
+          obj.coordDestinationId = mapInfoVillages.get(finalTarget)?.villageId;
+          map_nr_destination.set(finalTarget, (map_nr_destination.get(finalTarget) || 0) + 1);
+          list_info_launch.push({ ...obj });
+          list_href.push(href);
+          k++;
+        }
+      }
+
+      for (const info of list_info_launch) info.nr_to = map_nr_destination.get(info.coordDestination);
+      list_info_launch.sort((a, b) => new Date(a.landing_time) - new Date(b.landing_time));
+
+      $(".hide_btn_show").show();
+      $("#btn_show").off("click").on("click", () => showLaunches(list_info_launch));
+
+      shuffleArray(list_href);
+      launch(list_href, selectMod, nrSplits);
+    } catch (error) {
+      console.log(error);
+      if (String(error).includes("points") || String(error).includes("current_interval")) {
+        UI.ErrorMessage("Village database stale — running again will rebuild it.", 2500);
+        if (window.localforage) await window.localforage.removeItem(game_data.world + "infoVillages").catch(() => {});
+      } else {
+        UI.ErrorMessage("Something went wrong — see console.", 2500);
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  Launcher: open tabs in batches, or queue a "go to rally" walk
+   * ------------------------------------------------------------------ */
+  function launch(list_href, selectMod, nrSplits) {
+    $(".open_tab").remove();
+    if (selectMod === "open tabs") {
+      const nrButtons = Math.ceil(list_href.length / nrSplits);
+      let delayTab = parseInt(document.getElementById("delay_tabs").value);
+      delayTab = Number.isNaN(delayTab) || delayTab < 200 ? 200 : delayTab;
+      for (let i = 0; i < nrButtons; i++) {
+        const from = i * nrSplits;
+        const to = Math.min(from + nrSplits, list_href.length);
+        const btn = document.createElement("button");
+        btn.className = "btn evt-confirm-btn open_tab";
+        btn.innerText = `[ ${from} - ${to} ]`;
+        btn.onclick = function () {
+          const hrefs = list_href.slice(from, to);
+          for (let j = 0; j < hrefs.length; j++) {
+            window.setTimeout(() => window.open(hrefs[j], "_blank"), delayTab * j);
+          }
+          $(".open_tab").prop("disabled", true);
+          window.setTimeout(() => $(".open_tab").prop("disabled", false), delayTab * (to - from));
+        };
+        document.getElementById("div_open_tabs").appendChild(btn);
+      }
+    } else if (selectMod === "go to rally") {
+      const current = list_href.pop();
+      localStorage.setItem(game_data.world + "launchFakes", JSON.stringify(list_href));
+      window.open(current);
+    } else {
+      UI.ErrorMessage("Pick a launch option.", 1500);
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  Show planned launches (simple table)
+   * ------------------------------------------------------------------ */
+  function showLaunches(list) {
+    let html = `<table class="scriptTable"><tr><td>nr</td><td>from</td><td>to</td>`;
+    for (const u of units) if (u !== "militia" && u !== "snob")
+      html += `<td><img src="https://dsen.innogamescdn.com/asset/1d2499b/graphic/unit/unit_${u}.png"></td>`;
+    html += `<td>landing</td></tr>`;
+    list.forEach((o, i) => {
+      html += `<tr><td>${i}</td><td>${esc(o.coordOrigin)}</td><td>${esc(o.coordDestination)}</td>`;
+      for (let j = 0; j < o.nrCells; j++) {
+        const v = o.templateFakes[units[j]];
+        html += `<td>${v == undefined ? 0 : v}</td>`;
+      }
+      html += `<td>${esc(o.landing_time)}</td></tr>`;
+    });
+    html += `</table>`;
+    if (typeof Dialog !== "undefined") Dialog.show("nc_launches", html);
+    else { const d = document.getElementById("div_open_tabs"); d.insertAdjacentHTML("beforeend", html); }
   }
 
   /* ================================================================== *
