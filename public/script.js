@@ -74,8 +74,27 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
   }
 
   /* ------------------------------------------------------------------ *
+   *  Inline icons + asset helpers
+   *  (no third-party icons8 dependency — the UI never shows broken images)
+   * ------------------------------------------------------------------ */
+  const SVG_TRASH = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`;
+  const SVG_PLUS = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
+  const tabDeleteIcon = () => `<span class="remove_tab" title="remove list">${SVG_TRASH}</span>`;
+
+  // Prefer the game's own (version-matched) asset base; fall back to a pinned URL.
+  function unitImg(u) {
+    const base = (typeof window.image_base === "string" && window.image_base)
+      ? window.image_base
+      : "https://dsen.innogamescdn.com/asset/1d2499b/";
+    return `${base}graphic/unit/unit_${u}.png`;
+  }
+
+  /* ------------------------------------------------------------------ *
    *  Worker API (replaces the old Dropbox read/write)
    * ------------------------------------------------------------------ */
+  // false when the deployer never replaced the placeholder in API_BASE.
+  const API_CONFIGURED = !/YOUR-SUBDOMAIN|YOUR\.workers\.dev/i.test(API_BASE);
+
   function readHeaders() {
     // Admin key satisfies reads too, so a leader needs only the admin key.
     return { "X-Read-Key": getReadKey() || getAdminKey() };
@@ -196,6 +215,15 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       .tfh-err{color:#ff8a8a;font-weight:bold}
       .tfh-ok{color:#9be29b;font-weight:bold}
       .open_tab{margin:4px}
+      #add_tab svg,.remove_tab svg{vertical-align:middle;display:inline-block}
+      .remove_tab{cursor:pointer;opacity:.75;line-height:0;margin-left:2px}
+      .remove_tab:hover{opacity:1;color:#ff8a8a}
+      #add_tab{line-height:0}
+      .nc-tabtools{margin-top:4px;display:flex;gap:4px}
+      .nc-tabtools .btn,.nc-copy{font-size:11px}
+      #nc_open_progress{margin-left:8px}
+      .nc-banner{background:#5a1212;color:#ffdede;border:1px solid #ff8a8a;
+        border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:11px}
     `;
     const style = document.createElement("style");
     style.id = "newcostache-style";
@@ -263,7 +291,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
           <tr><td></td>`;
     for (const u of units) {
       if (u !== "militia" && u !== "snob") {
-        html += `<td class="fm_unit hide_${u}"><img src="https://dsen.innogamescdn.com/asset/1d2499b/graphic/unit/unit_${u}.png"></td>`;
+        html += `<td class="fm_unit hide_${u}"><img src="${unitImg(u)}"></td>`;
       }
     }
 
@@ -327,8 +355,8 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
         <div class="tab-panels" id="tabs_coord">
           <ul class="tabs" id="strip_own">
             <li class="update_tab own active" rel="panelOwn0"><font>my list</font>
-              <img class="remove_tab" src="https://img.icons8.com/doodle/16/000000/delete-sign.png"></li>
-            <li id="add_tab"><img src="https://img.icons8.com/color/16/000000/add-tab.png"></li>
+              ${tabDeleteIcon()}</li>
+            <li id="add_tab" title="new list">${SVG_PLUS}</li>
           </ul>
           <div id="all_tabs">
             <div id="panelOwn0" class="panel own active">
@@ -343,6 +371,10 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
 
           <br>
           <table class="scriptTableAlternate" style="width:96%">
+            <tr>
+              <td title="Comma-separated tribe tags OR names to never target (e.g. your own tribe + allies).">skip tribes:</td>
+              <td colspan="3"><input class="scriptInput" id="nc_skip_tribes" type="text" placeholder="MYTRIBE, ALLY1, ALLY2" style="width:96%;box-sizing:border-box"></td>
+            </tr>
             <tr>
               <td class="hide_fakes">nr fakes:</td>
               <td class="hide_fakes"><input class="scriptInput" id="nr_fakes" type="number" value="1"></td>
@@ -367,7 +399,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
             </tr>
           </table>
 
-          <div id="div_open_tabs"><h3 style="text-align:center;margin:8px">Open Tabs</h3></div>
+          <div id="div_open_tabs"><h3 style="text-align:center;margin:8px">Open Tabs<span id="nc_open_progress" class="tfh-meta"></span></h3></div>
         </div>
       </div>
       <div class="scriptFooter"><h5>NewCostache — built on Costache's script</h5></div>
@@ -404,7 +436,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
   function addEventPanel() {
     $("#strip_own li").each((i, item) => { if (item.id !== "add_tab") $(item).off("click"); });
     $("#strip_own li").not("#add_tab").on("click", function (event) {
-      if (event.target.tagName === "IMG") return; // delete icon handles itself
+      if ($(event.target).closest(".remove_tab").length) return; // delete icon handles itself
       if (!$(this).hasClass("active")) {
         $("#strip_own li.active, #strip_tribe li.active").removeClass("active");
         $("#all_tabs .panel.active, #all_tribe_tabs .panel.active").removeClass("active");
@@ -427,7 +459,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       const idNew = (ids.length ? Math.max(...ids) : -1) + 1;
       $("#add_tab").before(
         `<li class="update_tab own" rel="panelOwn${idNew}"><font>list ${idNew}</font>` +
-        `<img class="remove_tab" src="https://img.icons8.com/doodle/16/000000/delete-sign.png"></li>`
+        tabDeleteIcon() + `</li>`
       );
       $("#all_tabs").append(
         `<div id="panelOwn${idNew}" class="panel own"><p style="font-weight:bold">nr coords: 0</p>` +
@@ -436,6 +468,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       addEventPanel();
       removePanel();
       getCoordsEvent();
+      enhanceTabTools();
     });
   }
 
@@ -462,11 +495,47 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
     $("#all_tabs .panel").off("mouseout");
     $("#all_tabs .panel").on("mouseout", function () {
       const ta = this.getElementsByTagName("textarea")[0];
-      const coords = (ta.value.match(/\d+\|\d+/g)) || [];
+      const raw = (ta.value.match(/\d+\|\d+/g)) || [];
+      const coords = Array.from(new Set(raw)); // drop duplicates as you go
       ta.value = coords.join(" ");
-      $(this).find("p").first().text("nr coords: " + coords.length);
+      const dupes = raw.length - coords.length;
+      $(this).find("p").first().text("nr coords: " + coords.length + (dupes > 0 ? ` (${dupes} dup removed)` : ""));
       saveOwnData();
     });
+  }
+
+  // Add Copy/Clear toolbars under each tab's textarea (idempotent).
+  function enhanceTabTools() {
+    $("#all_tabs .panel.own").each(function () {
+      if ($(this).find(".nc-tabtools").length) return;
+      const ta = $(this).find("textarea").first();
+      if (ta.length) ta.after(
+        `<div class="nc-tabtools">` +
+        `<input type="button" class="btn evt-confirm-btn nc-copy" value="Copy">` +
+        `<input type="button" class="btn evt-confirm-btn nc-clear" value="Clear"></div>`
+      );
+    });
+    $("#all_tribe_tabs .panel").each(function () {
+      if ($(this).find(".nc-copy").length) return;
+      const ta = $(this).find("textarea").first();
+      if (ta.length) ta.after(
+        `<div class="nc-tabtools"><input type="button" class="btn evt-confirm-btn nc-copy" value="Copy"></div>`
+      );
+    });
+  }
+
+  function copyCoords(text, n) {
+    const done = () => { if (typeof UI !== "undefined") UI.SuccessMessage("Copied " + n + " coord(s).", 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+    } else { fallbackCopy(text, done); }
+  }
+  function fallbackCopy(text, done) {
+    const t = document.createElement("textarea");
+    t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.appendChild(t); t.select();
+    try { document.execCommand("copy"); done(); } catch (e) { /* ignore */ }
+    document.body.removeChild(t);
   }
 
   function saveOwnData() {
@@ -489,7 +558,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
         const coords = (t.coords || "").match(/\d+\|\d+/g) || [];
         $("#add_tab").before(
           `<li class="update_tab own ${idx === 0 ? "active" : ""}" rel="panelOwn${idx}"><font>${esc(t.name || "list " + idx)}</font>` +
-          `<img class="remove_tab" src="https://img.icons8.com/doodle/16/000000/delete-sign.png"></li>`
+          tabDeleteIcon() + `</li>`
         );
         $("#all_tabs").append(
           `<div id="panelOwn${idx}" class="panel own ${idx === 0 ? "active" : ""}"><p style="font-weight:bold">nr coords: ${coords.length}</p>` +
@@ -500,6 +569,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
     addEventPanel();
     removePanel();
     getCoordsEvent();
+    enhanceTabTools();
   }
 
   /* ------------------------------------------------------------------ *
@@ -569,6 +639,14 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
     $("#select_option_fakes").on("change", () => {
       localStorage.setItem(game_data.world + "optionAttack", document.getElementById("select_option_fakes").value);
     });
+  }
+
+  function initializationSkipTribes() {
+    const el = document.getElementById("nc_skip_tribes");
+    if (!el) return;
+    const stored = localStorage.getItem(game_data.world + "skipTribes");
+    if (stored != null) el.value = stored;
+    el.addEventListener("input", () => localStorage.setItem(game_data.world + "skipTribes", el.value));
   }
 
   /* ------------------------------------------------------------------ *
@@ -645,16 +723,33 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
   async function loadSharedTabs() {
     $("#strip_tribe").empty();
     $("#all_tribe_tabs").empty();
+    $(".nc-banner").remove();
+
+    // Loud, specific failure if the deployer never set the worker URL.
+    if (!API_CONFIGURED) {
+      $("#tfh_login").before(
+        `<div class="nc-banner">This copy of the script isn't configured: <b>API_BASE</b> still ` +
+        `has the placeholder URL. The tribe leader needs to set it in <code>public/script.js</code> ` +
+        `and redeploy (see docs/SETUP.md, Part 2).</div>`
+      );
+      $("#strip_tribe").html(`<li class="tfh-err" style="background:none">script not configured (API_BASE)</li>`);
+      if (typeof UI !== "undefined") UI.ErrorMessage("NewCostache: API_BASE not set — see SETUP.md.", 4000);
+      return;
+    }
+
     let data;
     try {
       data = await apiGetTabs();
     } catch (e) {
       if (e.unauthorized) {
-        $("#strip_tribe").html(`<li class="tfh-err" style="background:none">read key needed — see login above</li>`);
+        $("#strip_tribe").html(`<li class="tfh-err" style="background:none">read key missing or wrong — paste it under "Keys" above</li>`);
+        if (typeof UI !== "undefined") UI.ErrorMessage("Read key missing or wrong. Open the Keys box and paste your READ key.", 3500);
         showLogin(true);
         return;
       }
-      $("#strip_tribe").html(`<li class="tfh-err" style="background:none">couldn't reach the server</li>`);
+      // network / DNS / worker down — fetch() rejects with a TypeError here.
+      $("#strip_tribe").html(`<li class="tfh-err" style="background:none">couldn't reach the server — check your connection</li>`);
+      if (typeof UI !== "undefined") UI.ErrorMessage("Couldn't reach the NewCostache server. Check your internet, then retry.", 3500);
       return;
     }
     const tabs = data.tabs || [];
@@ -673,6 +768,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       });
     }
     wireTribeTabEvents();
+    enhanceTabTools();
   }
 
   /* ------------------------------------------------------------------ *
@@ -702,6 +798,10 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       if (r) localStorage.setItem(LS_READ_KEY, r); else localStorage.removeItem(LS_READ_KEY);
       if (a) localStorage.setItem(LS_ADMIN_KEY, a); else localStorage.removeItem(LS_ADMIN_KEY);
       $("#tfh_role").text(isAdmin() ? " (leader)" : "");
+      if (typeof UI !== "undefined") {
+        if (!r && !a) UI.ErrorMessage("No key entered — paste at least your READ key.", 3000);
+        else UI.SuccessMessage("Keys saved on this device.", 1500);
+      }
       loadSharedTabs();
     });
     $("#tfh_forgetkeys").on("click", () => {
@@ -861,16 +961,22 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       const mapAlly = new Map();
       const mapPlayer = new Map();
       const mapVillage = new Map();
+      // ally.txt: id, name, tag, ...  — keep both name and tag.
       for (let i = 0; i < dataAlly.length - 1; i++) {
         const c = dataAlly[i].split(",");
-        mapAlly.set(c[0], innoReplaceSpecialCaracters(c[1]));
+        mapAlly.set(c[0], {
+          name: innoReplaceSpecialCaracters(c[1]),
+          tag: innoReplaceSpecialCaracters(c[2] || ""),
+        });
       }
       for (let i = 0; i < dataPlayer.length - 1; i++) {
         const c = dataPlayer[i].split(",");
+        const ally = mapAlly.get(c[2]);
         mapPlayer.set(c[0], {
           allyId: c[2],
           playerName: innoReplaceSpecialCaracters(c[1]),
-          tribeName: mapAlly.get(c[2]) == undefined ? "none" : mapAlly.get(c[2]),
+          tribeName: ally == undefined ? "none" : ally.name,
+          tribeTag: ally == undefined ? "" : ally.tag,
         });
       }
       for (let i = 0; i < dataVillage.length; i++) {
@@ -879,7 +985,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
         if (p != undefined) {
           mapVillage.set(c[2] + "|" + c[3], {
             villageId: c[0], playerId: c[4], points: c[5],
-            allyId: p.allyId, playerName: p.playerName, tribeName: p.tribeName,
+            allyId: p.allyId, playerName: p.playerName, tribeName: p.tribeName, tribeTag: p.tribeTag,
           });
         }
       }
@@ -936,8 +1042,11 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       nrFakesPerVillage = Number.isNaN(nrFakesPerVillage) || nrFakesPerVillage === 0 ? 4 : nrFakesPerVillage;
       nrFakesPerVillage--;
 
-      // No ally list in this model -> nothing filtered out as "ally". (See README.)
-      const ally_tribe = [];
+      // Tribe tags the user never wants to target (own tribe + allies).
+      const skipTribes = new Set(
+        (document.getElementById("nc_skip_tribes")?.value || "")
+          .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)
+      );
 
       // If re-running after opening a batch, refresh the combined table HTML.
       if (document.getElementsByClassName("open_tab").length > 0) {
@@ -1106,13 +1215,17 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       if (list_coords.length === 0) { UI.ErrorMessage("No target coords in the active tab.", 2000); return; }
       if (selectAttack === "fakes") list_coords = Array.from(new Set(list_coords)); // dedupe for fakes only
 
-      // drop non-existent, barbs, and (if any) allied villages
+      // drop non-existent, barbs, and skipped (own/ally) tribes
+      let skippedAlly = 0;
       list_coords = list_coords.filter((c) => {
         const info = mapInfoVillages.get(c);
         if (!info || info.playerId === "0") return false;
-        if (ally_tribe.length && ally_tribe.includes(info.allyId)) return false;
+        const tn = (info.tribeName || "").toLowerCase();
+        const tg = (info.tribeTag || "").toLowerCase();
+        if (skipTribes.size && (skipTribes.has(tn) || (tg && skipTribes.has(tg)))) { skippedAlly++; return false; }
         return true;
       });
+      if (skippedAlly > 0 && typeof UI !== "undefined") UI.SuccessMessage(`skipped ${skippedAlly} village(s) in protected tribes`, 1500);
       if (list_coords.length === 0) { UI.ErrorMessage("No valid targets after filtering.", 2000); return; }
       shuffleArray(list_coords);
 
@@ -1231,8 +1344,10 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
    * ------------------------------------------------------------------ */
   function launch(list_href, selectMod, nrSplits) {
     $(".open_tab").remove();
+    $("#nc_open_progress").text("");
     if (!list_href.length) { UI.ErrorMessage("No attacks matched (check targets / window / troops).", 2500); return; }
     if (selectMod === "open tabs") {
+      const setProgress = (t) => { const el = document.getElementById("nc_open_progress"); if (el) el.textContent = t ? "  " + t : ""; };
       const nrButtons = Math.ceil(list_href.length / nrSplits);
       let delayTab = parseInt(document.getElementById("delay_tabs").value);
       delayTab = Number.isNaN(delayTab) || delayTab < 200 ? 200 : delayTab;
@@ -1244,8 +1359,15 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
         btn.innerText = `[ ${from} - ${to} ]`;
         btn.onclick = function () {
           const hrefs = list_href.slice(from, to);
+          const total = hrefs.length;
+          let opened = 0;
+          setProgress(`opening 0/${total}…`);
           for (let j = 0; j < hrefs.length; j++) {
-            window.setTimeout(() => window.open(hrefs[j], "_blank"), delayTab * j);
+            window.setTimeout(() => {
+              window.open(hrefs[j], "_blank");
+              opened++;
+              setProgress(opened >= total ? `opened ${total} ✓` : `opening ${opened}/${total}…`);
+            }, delayTab * j);
           }
           $(".open_tab").prop("disabled", true);
           window.setTimeout(() => $(".open_tab").prop("disabled", false), delayTab * (to - from));
@@ -1267,7 +1389,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
   function showLaunches(list) {
     let html = `<table class="scriptTable"><tr><td>nr</td><td>from</td><td>to</td>`;
     for (const u of units) if (u !== "militia" && u !== "snob")
-      html += `<td><img src="https://dsen.innogamescdn.com/asset/1d2499b/graphic/unit/unit_${u}.png"></td>`;
+      html += `<td><img src="${unitImg(u)}"></td>`;
     html += `<td>landing</td></tr>`;
     list.forEach((o, i) => {
       html += `<tr><td>${i}</td><td>${esc(o.coordOrigin)}</td><td>${esc(o.coordDestination)}</td>`;
@@ -1388,12 +1510,30 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
     initializationNrFakes();
     initializationTroupes();
     initializationOptionAttack();
+    initializationSkipTribes();
     initializationOwnTabs();
     loadSharedTabs();
 
     $("#select_type_attack").on("change", applyAttackTypeVisibility);
     $("#btn_start").on("click", startFakes);
     $("#btn_grabber").on("click", createTableGetCoords);
+
+    // Copy / Clear toolbars (delegated — panels are created dynamically).
+    $(document).on("click", ".nc-copy", function () {
+      const ta = $(this).closest(".panel").find("textarea")[0];
+      if (!ta) return;
+      const coords = ta.value.match(/\d+\|\d+/g) || [];
+      copyCoords(coords.join(" "), coords.length);
+    });
+    $(document).on("click", ".nc-clear", function () {
+      const panel = $(this).closest(".panel")[0];
+      const ta = panel && panel.getElementsByTagName("textarea")[0];
+      if (!ta || !(ta.value || "").trim()) return;
+      if (!window.confirm("Clear all coords in this list?")) return;
+      ta.value = "";
+      $(panel).find("p").first().text("nr coords: 0");
+      if (panel.classList.contains("own")) saveOwnData();
+    });
   }
 
   (async () => {
