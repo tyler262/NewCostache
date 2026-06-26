@@ -224,6 +224,12 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
       #nc_open_progress{margin-left:8px}
       .nc-banner{background:#5a1212;color:#ffdede;border:1px solid #ff8a8a;
         border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:11px}
+      .nc-help{font:12px/1.5 Verdana,sans-serif;max-width:560px}
+      .nc-help h4{margin:10px 0 2px;border-bottom:1px solid #ccc;padding-bottom:2px}
+      .nc-help ul{margin:4px 0 4px 18px;padding:0}
+      .nc-help li{margin:2px 0}
+      .nc-help code{background:rgba(0,0,0,.08);padding:0 3px;border-radius:3px}
+      #nc_help:hover{text-decoration:underline}
     `;
     const style = document.createElement("style");
     style.id = "newcostache-style";
@@ -268,6 +274,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
         <h2>Fakes / Nukes / Fangs</h2>
         <div style="position:absolute;top:6px;right:8px;cursor:pointer" id="div_close">✖</div>
         <div style="position:absolute;top:6px;right:30px;cursor:pointer" id="div_minimize">▁</div>
+        <div style="position:absolute;top:6px;left:8px;cursor:pointer;font-weight:bold" id="nc_help" title="How to use">❓ Help</div>
         <div style="margin-top:4px;text-align:center" class="set_troops">
           <select id="select_type_attack">
             <option value="fakes">fakes</option>
@@ -1404,6 +1411,73 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
     else { const d = document.getElementById("div_open_tabs"); d.insertAdjacentHTML("beforeend", html); }
   }
 
+  /* ------------------------------------------------------------------ *
+   *  Help / how-to (in-tool usage guide)
+   * ------------------------------------------------------------------ */
+  function showHelp() {
+    const html = `
+      <div class="nc-help">
+        <p><b>What this does:</b> it builds attack links for your villages against a
+        target list and opens them for you. <b>It never sends on its own</b> —
+        you review every attack and press send. Run it from
+        <b>Overview → Combined</b> (overview_villages&amp;mode=combined).</p>
+
+        <h4>1. One-time setup (keys)</h4>
+        <ul>
+          <li>Open <b>Keys</b> and paste the <b>read key</b> your tribe gave you — this lets
+          you see the shared lists. Leaders also paste the <b>admin key</b> to publish lists.</li>
+          <li>Keys are stored on this device only.</li>
+        </ul>
+
+        <h4>2. Pick what to send</h4>
+        <ul>
+          <li><b>fakes</b> — small attacks that clear the fake limit. Set per-unit
+          “send” to <b>min</b> (smart minimum) or a fixed number.</li>
+          <li><b>nukes / fangs</b> — full armies. Set how many of each unit to <b>send</b>
+          and how many to <b>reserve</b>, plus a <b>min population</b> so tiny stacks are skipped.</li>
+        </ul>
+
+        <h4>3. Choose targets</h4>
+        <ul>
+          <li><b>My lists</b> — your private tabs (＋ to add, click a tab name to rename,
+          🗑 to remove). Paste coords like <code>500|512 501|498</code>.</li>
+          <li><b>Shared tribe lists</b> — published by leaders; everyone sees them.</li>
+          <li><b>Coord grabber</b> — auto-fill the active tab by filtering the world
+          (players, tribes, continents, a box, or a radius).</li>
+          <li><b>Copy / Clear</b> buttons sit under each list. Duplicates are removed
+          automatically as you type.</li>
+        </ul>
+
+        <h4>4. Protect friendlies</h4>
+        <ul>
+          <li><b>skip tribes</b> — comma-separated tribe tags or names you never want to
+          hit (your own tribe + allies). Matching villages are dropped automatically.</li>
+        </ul>
+
+        <h4>5. Timing (optional)</h4>
+        <ul>
+          <li>Attacks that would land during the world’s <b>night bonus</b> are skipped automatically.</li>
+          <li><b>attacks land between</b> — tick it and set two times to only keep attacks
+          landing inside that window.</li>
+        </ul>
+
+        <h4>6. Launch</h4>
+        <ul>
+          <li><b>open tabs</b> — makes <code>[ from - to ]</code> buttons; each opens that
+          batch of attack screens (you press send in each). <b>split tabs</b> sets the batch
+          size; <b>delay open tabs</b> spaces them out.</li>
+          <li><b>go to rally</b> — walks you through them one rally point at a time.</li>
+          <li><b>Show</b> previews the planned attacks; for nukes/fangs on your own list,
+          <b>Delete</b> removes the used targets afterward.</li>
+        </ul>
+
+        <p style="opacity:.8"><b>Reminder:</b> this tool only prepares attacks. You confirm
+        and send each one yourself — keep it that way.</p>
+      </div>`;
+    if (typeof Dialog !== "undefined") Dialog.show("nc_help_dialog", html);
+    else window.alert("NewCostache help — see the panel.");
+  }
+
   /* ================================================================== *
    *  COORD GRABBER — filter the world's villages into a coord list
    * ================================================================== */
@@ -1517,6 +1591,7 @@ const API_BASE = "https://tw-fakes.YOUR-SUBDOMAIN.workers.dev";
     $("#select_type_attack").on("change", applyAttackTypeVisibility);
     $("#btn_start").on("click", startFakes);
     $("#btn_grabber").on("click", createTableGetCoords);
+    $("#nc_help").on("click", showHelp);
 
     // Copy / Clear toolbars (delegated — panels are created dynamically).
     $(document).on("click", ".nc-copy", function () {
